@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "name": "(lldb) Anexar",
+            "type": "cppdbg",
+            "request": "attach",
+            "program": "${workspaceFolder}/a.out",
+            "MIMode": "lldb",
+            "preLaunchTask": "set DYLD_LIBRARY_PATH"
+        },
+        {
+            "name": "C/C++: clang Compilar e depurar o arquivo ativo",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${fileDirname}/${fileBasenameNoExtension}",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "preLaunchTask": "set DYLD_LIBRARY_PATH"
+        }
+    ],
+    "version": "2.0.0"
+}
