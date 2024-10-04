@@ -29,7 +29,7 @@ double run_painting_iteration(double gamma, int minkowski_p, double learning_rat
                               double epsilon, WeightInfo* weight_info_array, unsigned int* seed_ptr,
                               unsigned char* painted, TimeInfo* times_info,
                               int* painted_order, int* spiral_indices);
-int* generate_spiral_indices();
+int* generate_spiral_indices(void);
 
 int main(int argc, char* argv[]) {
     WeightInfo* weight_info_array = (WeightInfo*)malloc(NUM_PIXELS * sizeof(WeightInfo));
@@ -112,6 +112,7 @@ int main(int argc, char* argv[]) {
 
     unsigned int seed = (unsigned int)time(NULL);
 
+
     save_matrix_as_pgm_sequence(weight_info_array, "initialized_weights", WINDOW_WIDTH, WINDOW_HEIGHT);
 
     int iteration = 0;
@@ -165,7 +166,7 @@ int main(int argc, char* argv[]) {
 
     printf("Training with best hyperparameters for 1000 iterations...\n");
     memcpy(weight_info_array, best_weight_info_array, NUM_PIXELS * sizeof(WeightInfo));
-    for (int iter = 0; iter < 1000; iter++) {
+    for (int iter = 0; iter < 10000; iter++) {
         memset(painted, 0, painted_array_size);
         memset(times_info, 0, NUM_PIXELS * sizeof(TimeInfo));
         memset(painted_order, 0, NUM_PIXELS * sizeof(int));
@@ -293,15 +294,16 @@ double run_painting_iteration(double gamma, int minkowski_p, double learning_rat
 void save_matrix_as_pgm_sequence(WeightInfo* weight_info_array, const char* filename, int width, int height) {
     int num_pixels = width * height;
 
+   
     int* indices = (int*)malloc(num_pixels * sizeof(int));
     if (!indices) {
         fprintf(stderr, "Failed to allocate memory for indices.\n");
         return;
     }
-
     for (int i = 0; i < num_pixels; i++) {
         indices[i] = i;
     }
+
 
     for (int i = 0; i < num_pixels - 1; i++) {
         int max_idx = i;
@@ -310,11 +312,12 @@ void save_matrix_as_pgm_sequence(WeightInfo* weight_info_array, const char* file
                 max_idx = j;
             }
         }
-        int temp_idx = indices[i];
+        int temp = indices[i];
         indices[i] = indices[max_idx];
-        indices[max_idx] = temp_idx;
+        indices[max_idx] = temp;
     }
 
+    // Create images for each step
     unsigned char* image = (unsigned char*)calloc(num_pixels, sizeof(unsigned char));
     if (!image) {
         fprintf(stderr, "Failed to allocate memory for image.\n");
@@ -324,7 +327,7 @@ void save_matrix_as_pgm_sequence(WeightInfo* weight_info_array, const char* file
 
     for (int step = 0; step < num_pixels; step++) {
         int idx = indices[step];
-        image[idx] = 255;
+        image[idx] = 255;  // Set the current pixel to white
 
         char full_filename[256];
         sprintf(full_filename, "%s_%04d.pgm", filename, step);
@@ -342,7 +345,7 @@ void save_matrix_as_pgm_sequence(WeightInfo* weight_info_array, const char* file
     free(image);
 }
 
-int* generate_spiral_indices() {
+int* generate_spiral_indices(void) {
     int* spiral_indices = (int*)malloc(NUM_PIXELS * sizeof(int));
     if (!spiral_indices) {
         fprintf(stderr, "Failed to allocate memory for spiral_indices.\n");
@@ -385,3 +388,4 @@ int* generate_spiral_indices() {
 
     return spiral_indices;
 }
+
