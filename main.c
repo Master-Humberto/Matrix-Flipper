@@ -30,14 +30,26 @@ double run_painting_iteration(double gamma, int minkowski_p, double learning_rat
                               unsigned char* painted, TimeInfo* times_info,
                               int* painted_order);
 
-// Comparator function for qsort
-int compare_weights(const void* a, const void* b) {
-    const WeightInfo* w1 = *(const WeightInfo**)a;
-    const WeightInfo* w2 = *(const WeightInfo**)b;
+// // Comparator function for qsort
+// int compare_weights(const void* a, const void* b) {
+//     const WeightInfo* w1 = (const WeightInfo*)a;
+//     const WeightInfo* w2 = (const WeightInfo*)b;
 
-    if (w1->weight < w2->weight) return 1;  // Descending order
-    if (w1->weight > w2->weight) return -1;
-    return 0;
+//     if (w1->weight < w2->weight) return 1;  // Descending order
+//     if (w1->weight > w2->weight) return -1;
+//     return 0;
+// }
+
+void bubbleSort(WeightInfo* weight_info_array, int num_pixels) {
+    for (int i = 0; i < num_pixels - 1; i++) {
+        for (int j = 0; j < num_pixels - i - 1; j++) {
+            if (weight_info_array[j].weight < weight_info_array[j + 1].weight) {
+                WeightInfo temp = weight_info_array[j];
+                weight_info_array[j] = weight_info_array[j + 1];
+                weight_info_array[j + 1] = temp;
+            }
+        }
+    }
 }
 
 void save_weights_as_pgm_sequence(WeightInfo* weight_info_array, int iteration, int width, int height) {
@@ -54,7 +66,7 @@ void save_weights_as_pgm_sequence(WeightInfo* weight_info_array, int iteration, 
     }
 
     // Sort the pointers based on weight in descending order
-    qsort(weight_pointers, num_pixels, sizeof(WeightInfo*), compare_weights);
+    bubbleSort(weight_info_array, num_pixels);
 
     // Create images for each step
     unsigned char* image = (unsigned char*)calloc(num_pixels, sizeof(unsigned char));
@@ -128,7 +140,7 @@ void run_iterations(int total_iterations, int width, int height, WeightInfo* wei
         printf("Iteration %d, Loss: %f\n", iter, total_loss);
 
         // Save images and create GIFs at specified iterations
-        if (iter % 100 == 0) {
+        if (iter % 1000 == 0) {
             printf("Debug: Saving images for iteration %d\n", iter);
             save_weights_as_pgm_sequence(weight_info_array, iter, width, height);
             create_gif_from_pgm_images(iter);
@@ -267,9 +279,9 @@ int main(int argc, char* argv[]) {
     printf("EPSILON (Exploration Rate): %f\n", best_epsilon);
 
     // Save the final weights
-    save_weights_as_pgm_sequence(weight_info_array, 1000, WINDOW_WIDTH, WINDOW_HEIGHT);
-    create_gif_from_pgm_images(1000);
-    delete_pgm_files(1000);
+    save_weights_as_pgm_sequence(weight_info_array, 10000, WINDOW_WIDTH, WINDOW_HEIGHT);
+    create_gif_from_pgm_images(10000);
+    delete_pgm_files(10000);
 
     free(weight_info_array);
     free(best_weight_info_array);
