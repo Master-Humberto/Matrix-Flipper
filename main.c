@@ -24,12 +24,123 @@ typedef struct {
     int y;
 } TimeInfo;
 
-void save_matrix_as_pgm_sequence(WeightInfo* weight_info_array, const char* filename, int width, int height);
+// Function prototype
 double run_painting_iteration(double gamma, int minkowski_p, double learning_rate,
-                              double epsilon, WeightInfo* weight_info_array, unsigned int* seed_ptr,
+                              double epsilon, WeightInfo* weight_info_array,
                               unsigned char* painted, TimeInfo* times_info,
-                              int* painted_order, int* spiral_indices);
-int* generate_spiral_indices(void);
+                              int* painted_order);
+
+// Comparator function for qsort
+int compare_weights(const void* a, const void* b) {
+    const WeightInfo* w1 = *(const WeightInfo**)a;
+    const WeightInfo* w2 = *(const WeightInfo**)b;
+
+    if (w1->weight < w2->weight) return 1;  // Descending order
+    if (w1->weight > w2->weight) return -1;
+    return 0;
+}
+
+void save_weights_as_pgm_sequence(WeightInfo* weight_info_array, int iteration, int width, int height) {
+    int num_pixels = width * height;
+
+    // Create an array of pointers to WeightInfo
+    WeightInfo** weight_pointers = (WeightInfo**)malloc(num_pixels * sizeof(WeightInfo*));
+    if (!weight_pointers) {
+        fprintf(stderr, "Failed to allocate memory for weight_pointers.\n");
+        return;
+    }
+    for (int i = 0; i < num_pixels; i++) {
+        weight_pointers[i] = &weight_info_array[i];
+    }
+
+    // Sort the pointers based on weight in descending order
+    qsort(weight_pointers, num_pixels, sizeof(WeightInfo*), compare_weights);
+
+    // Create images for each step
+    unsigned char* image = (unsigned char*)calloc(num_pixels, sizeof(unsigned char));
+    if (!image) {
+        fprintf(stderr, "Failed to allocate memory for image.\n");
+        free(weight_pointers);
+        return;
+    }
+
+    memset(image, 0, num_pixels); // Initialize all pixels to black
+
+    for (int step = 0; step < num_pixels; step++) {
+        int x = weight_pointers[step]->x;
+        int y = weight_pointers[step]->y;
+        int image_idx = y * width + x;
+        image[image_idx] = 255;  // Set the pixel at (x, y) to white
+
+        char full_filename[256];
+        sprintf(full_filename, "weights_%04d_%04d.pgm", iteration, step);
+        FILE* fp = fopen(full_filename, "wb");
+        if (!fp) {
+            fprintf(stderr, "Cannot open file %s for writing\n", full_filename);
+            continue;
+        }
+        fprintf(fp, "P5\n%d %d\n255\n", width, height);
+        fwrite(image, sizeof(unsigned char), num_pixels, fp);
+        fclose(fp);
+    }
+
+    free(weight_pointers);
+    free(image);
+}
+
+void create_gif_from_pgm_images(int iteration) {
+    char command[512];
+    sprintf(command, "convert -delay 10 -loop 0 weights_%04d_*.pgm weights_%04d.gif", iteration, iteration);
+    system(command);
+}
+
+void delete_pgm_files(int iteration) {
+    char command[256];
+    sprintf(command, "rm weights_%04d_*.pgm", iteration);
+    system(command);
+}
+
+void run_iterations(int total_iterations, int width, int height, WeightInfo* weight_info_array,
+                    double gamma, int minkowski_p, double learning_rate, double epsilon) {
+    // Initialize necessary variables
+    size_t painted_array_size = (NUM_PIXELS + 7) / 8;
+    unsigned char* painted = (unsigned char*)calloc(painted_array_size, sizeof(unsigned char));
+    TimeInfo* times_info = (TimeInfo*)malloc(NUM_PIXELS * sizeof(TimeInfo));
+    int* painted_order = (int*)malloc(NUM_PIXELS * sizeof(int));
+
+    if (!painted || !times_info || !painted_order) {
+        fprintf(stderr, "Failed to allocate memory for iteration variables.\n");
+        free(painted);
+        free(times_info);
+        free(painted_order);
+        return;
+    }
+
+    for (int iter = 1; iter <= total_iterations; iter++) {
+        printf("Debug: Starting iteration %d\n", iter);
+        memset(painted, 0, painted_array_size);
+        memset(times_info, 0, NUM_PIXELS * sizeof(TimeInfo));
+        memset(painted_order, 0, NUM_PIXELS * sizeof(int));
+
+        double total_loss = run_painting_iteration(
+            gamma, minkowski_p, learning_rate, epsilon, weight_info_array,
+            painted, times_info, painted_order);
+        printf("Iteration %d, Loss: %f\n", iter, total_loss);
+
+        // Save images and create GIFs at specified iterations
+        if (iter % 100 == 0) {
+            printf("Debug: Saving images for iteration %d\n", iter);
+            save_weights_as_pgm_sequence(weight_info_array, iter, width, height);
+            create_gif_from_pgm_images(iter);
+            delete_pgm_files(iter);
+            printf("Debug: Finished saving images for iteration %d\n", iter);
+        }
+    }
+
+    free(painted);
+    free(times_info);
+    free(painted_order);
+}
 
 int main(int argc, char* argv[]) {
     WeightInfo* weight_info_array = (WeightInfo*)malloc(NUM_PIXELS * sizeof(WeightInfo));
@@ -38,14 +149,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    int* spiral_indices = generate_spiral_indices();
-    if (!spiral_indices) {
-        fprintf(stderr, "Failed to generate spiral indices.\n");
-        free(weight_info_array);
-        return 1;
-    }
-
+    // Seed the random number generator once
     srand((unsigned int)time(NULL));
+
     for (int i = 0; i < NUM_PIXELS; i++) {
         weight_info_array[i].weight = (double)rand() / RAND_MAX;
         weight_info_array[i].idx = i;
@@ -53,33 +159,10 @@ int main(int argc, char* argv[]) {
         weight_info_array[i].y = i / WINDOW_WIDTH;
     }
 
-    size_t painted_array_size = (NUM_PIXELS + 7) / 8;
-    unsigned char* painted = (unsigned char*)calloc(painted_array_size, sizeof(unsigned char));
-    if (!painted) {
-        fprintf(stderr, "Failed to allocate memory for painted bitset.\n");
-        free(weight_info_array);
-        free(spiral_indices);
-        return 1;
-    }
-
-    TimeInfo* times_info = (TimeInfo*)malloc(NUM_PIXELS * sizeof(TimeInfo));
-    if (!times_info) {
-        fprintf(stderr, "Failed to allocate memory for times_info.\n");
-        free(weight_info_array);
-        free(painted);
-        free(spiral_indices);
-        return 1;
-    }
-
-    int* painted_order = (int*)malloc(NUM_PIXELS * sizeof(int));
-    if (!painted_order) {
-        fprintf(stderr, "Failed to allocate memory for painted_order.\n");
-        free(weight_info_array);
-        free(painted);
-        free(times_info);
-        free(spiral_indices);
-        return 1;
-    }
+    // Save the initial weights as GIF
+    save_weights_as_pgm_sequence(weight_info_array, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+    create_gif_from_pgm_images(0);
+    delete_pgm_files(0);
 
     double gamma_values[] = {0.5, 0.7, 0.9, 0.95, 0.99};
     int gamma_count = sizeof(gamma_values) / sizeof(gamma_values[0]);
@@ -99,21 +182,13 @@ int main(int argc, char* argv[]) {
     int best_minkowski_p = 1;
     double best_learning_rate = 0.0;
     double best_epsilon = 0.0;
+
     WeightInfo* best_weight_info_array = (WeightInfo*)malloc(NUM_PIXELS * sizeof(WeightInfo));
     if (!best_weight_info_array) {
         fprintf(stderr, "Failed to allocate memory for best_weight_info_array.\n");
         free(weight_info_array);
-        free(painted);
-        free(times_info);
-        free(painted_order);
-        free(spiral_indices);
         return 1;
     }
-
-    unsigned int seed = (unsigned int)time(NULL);
-
-
-    save_matrix_as_pgm_sequence(weight_info_array, "initialized_weights", WINDOW_WIDTH, WINDOW_HEIGHT);
 
     int iteration = 0;
     for (int gi = 0; gi < gamma_count; gi++) {
@@ -125,22 +200,35 @@ int main(int argc, char* argv[]) {
                     double learning_rate = learning_rate_values[li];
                     double epsilon = epsilon_values[ei];
 
-                    srand((unsigned int)time(NULL));
+                    // Re-randomize weights before each hyperparameter set
                     for (int i = 0; i < NUM_PIXELS; i++) {
                         weight_info_array[i].weight = (double)rand() / RAND_MAX;
                     }
 
                     double total_loss = 0.0;
                     for (int iter = 0; iter < 100; iter++) {
-                        memset(painted, 0, painted_array_size);
-                        memset(times_info, 0, NUM_PIXELS * sizeof(TimeInfo));
-                        memset(painted_order, 0, NUM_PIXELS * sizeof(int));
+                        // Initialize variables for each iteration
+                        size_t painted_array_size = (NUM_PIXELS + 7) / 8;
+                        unsigned char* painted = (unsigned char*)calloc(painted_array_size, sizeof(unsigned char));
+                        TimeInfo* times_info = (TimeInfo*)malloc(NUM_PIXELS * sizeof(TimeInfo));
+                        int* painted_order = (int*)malloc(NUM_PIXELS * sizeof(int));
 
-                        seed = (unsigned int)time(NULL) + iter;
+                        if (!painted || !times_info || !painted_order) {
+                            fprintf(stderr, "Failed to allocate memory for iteration variables.\n");
+                            free(painted);
+                            free(times_info);
+                            free(painted_order);
+                            continue;
+                        }
 
                         total_loss += run_painting_iteration(
-                            gamma, minkowski_p, learning_rate, epsilon, weight_info_array, &seed,
-                            painted, times_info, painted_order, spiral_indices);
+                            gamma, minkowski_p, learning_rate, epsilon, weight_info_array,
+                            painted, times_info, painted_order);
+
+                        // Free allocated memory
+                        free(painted);
+                        free(times_info);
+                        free(painted_order);
                     }
 
                     total_loss /= 100.0;
@@ -166,18 +254,9 @@ int main(int argc, char* argv[]) {
 
     printf("Training with best hyperparameters for 1000 iterations...\n");
     memcpy(weight_info_array, best_weight_info_array, NUM_PIXELS * sizeof(WeightInfo));
-    for (int iter = 0; iter < 10000; iter++) {
-        memset(painted, 0, painted_array_size);
-        memset(times_info, 0, NUM_PIXELS * sizeof(TimeInfo));
-        memset(painted_order, 0, NUM_PIXELS * sizeof(int));
 
-        seed = (unsigned int)time(NULL) + iter;
-
-        double total_loss = run_painting_iteration(
-            best_gamma, best_minkowski_p, best_learning_rate, best_epsilon, weight_info_array, &seed,
-            painted, times_info, painted_order, spiral_indices);
-        printf("Iteration %d, Loss: %f\n", iter + 1, total_loss);
-    }
+    run_iterations(1000, WINDOW_WIDTH, WINDOW_HEIGHT, weight_info_array,
+                   best_gamma, best_minkowski_p, best_learning_rate, best_epsilon);
 
     printf("\nBest Iteration: %d\n", best_iteration);
     printf("Best Total Loss: %f\n", best_total_loss);
@@ -187,14 +266,13 @@ int main(int argc, char* argv[]) {
     printf("LEARNING_RATE: %f\n", best_learning_rate);
     printf("EPSILON (Exploration Rate): %f\n", best_epsilon);
 
-    save_matrix_as_pgm_sequence(best_weight_info_array, "best_weights", WINDOW_WIDTH, WINDOW_HEIGHT);
+    // Save the final weights
+    save_weights_as_pgm_sequence(weight_info_array, 1000, WINDOW_WIDTH, WINDOW_HEIGHT);
+    create_gif_from_pgm_images(1000);
+    delete_pgm_files(1000);
 
     free(weight_info_array);
     free(best_weight_info_array);
-    free(painted);
-    free(times_info);
-    free(painted_order);
-    free(spiral_indices);
 
     printf("Training completed. Exiting.\n");
 
@@ -202,15 +280,9 @@ int main(int argc, char* argv[]) {
 }
 
 double run_painting_iteration(double gamma, int minkowski_p, double learning_rate,
-                              double epsilon, WeightInfo* weight_info_array, unsigned int* seed_ptr,
+                              double epsilon, WeightInfo* weight_info_array,
                               unsigned char* painted, TimeInfo* times_info,
-                              int* painted_order, int* spiral_indices) {
-    unsigned int seed = *seed_ptr;
-
-    seed = seed * 1103515245 + 12345;
-    *seed_ptr = seed;
-    srand(seed);
-
+                              int* painted_order) {
     int painted_count = 0;
 
     for (int i = 0; i < NUM_PIXELS; i++) {
@@ -221,7 +293,19 @@ double run_painting_iteration(double gamma, int minkowski_p, double learning_rat
 
     double total_loss = 0.0;
 
-    int current_idx = 0;
+    // Start from the unpainted pixel with the highest weight
+    int current_idx = -1;
+    double max_weight = -INFINITY;
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        if (!GET_BIT(painted, i) && weight_info_array[i].weight > max_weight) {
+            max_weight = weight_info_array[i].weight;
+            current_idx = i;
+        }
+    }
+    if (current_idx == -1) {
+        // All pixels are painted
+        return total_loss;
+    }
     int current_x = current_idx % WINDOW_WIDTH;
     int current_y = current_idx / WINDOW_WIDTH;
 
@@ -263,8 +347,10 @@ double run_painting_iteration(double gamma, int minkowski_p, double learning_rat
         weight_info_array[current_idx].weight = fmax(0.0, fmin(1.0, weight_info_array[current_idx].weight));
 
         int next_idx = -1;
-        int attempts = 0;
+
         if ((double)rand() / RAND_MAX < epsilon) {
+            // Exploration: pick a random unpainted pixel
+            int attempts = 0;
             do {
                 next_idx = rand() % NUM_PIXELS;
                 attempts++;
@@ -273,13 +359,22 @@ double run_painting_iteration(double gamma, int minkowski_p, double learning_rat
                 }
             } while (GET_BIT(painted, next_idx));
         } else {
-            next_idx = current_idx + 1;
-            while (next_idx < NUM_PIXELS && GET_BIT(painted, next_idx)) {
-                next_idx++;
+            // Exploitation: pick the unpainted pixel with the highest weight
+            double max_weight = -INFINITY;
+            for (int i = 0; i < NUM_PIXELS; i++) {
+                if (!GET_BIT(painted, i) && weight_info_array[i].weight > max_weight) {
+                    max_weight = weight_info_array[i].weight;
+                    next_idx = i;
+                }
+            }
+            if (next_idx == -1) {
+                // All pixels are painted
+                break;
             }
         }
 
-        if (next_idx >= NUM_PIXELS || GET_BIT(painted, next_idx)) {
+        if (next_idx == -1 || GET_BIT(painted, next_idx)) {
+            // No unpainted pixels left
             break;
         }
 
@@ -290,102 +385,3 @@ double run_painting_iteration(double gamma, int minkowski_p, double learning_rat
 
     return total_loss;
 }
-
-void save_matrix_as_pgm_sequence(WeightInfo* weight_info_array, const char* filename, int width, int height) {
-    int num_pixels = width * height;
-
-   
-    int* indices = (int*)malloc(num_pixels * sizeof(int));
-    if (!indices) {
-        fprintf(stderr, "Failed to allocate memory for indices.\n");
-        return;
-    }
-    for (int i = 0; i < num_pixels; i++) {
-        indices[i] = i;
-    }
-
-
-    for (int i = 0; i < num_pixels - 1; i++) {
-        int max_idx = i;
-        for (int j = i + 1; j < num_pixels; j++) {
-            if (weight_info_array[indices[j]].weight > weight_info_array[indices[max_idx]].weight) {
-                max_idx = j;
-            }
-        }
-        int temp = indices[i];
-        indices[i] = indices[max_idx];
-        indices[max_idx] = temp;
-    }
-
-    // Create images for each step
-    unsigned char* image = (unsigned char*)calloc(num_pixels, sizeof(unsigned char));
-    if (!image) {
-        fprintf(stderr, "Failed to allocate memory for image.\n");
-        free(indices);
-        return;
-    }
-
-    for (int step = 0; step < num_pixels; step++) {
-        int idx = indices[step];
-        image[idx] = 255;  // Set the current pixel to white
-
-        char full_filename[256];
-        sprintf(full_filename, "%s_%04d.pgm", filename, step);
-        FILE* fp = fopen(full_filename, "wb");
-        if (!fp) {
-            fprintf(stderr, "Cannot open file %s for writing\n", full_filename);
-            continue;
-        }
-        fprintf(fp, "P5\n%d %d\n255\n", width, height);
-        fwrite(image, sizeof(unsigned char), num_pixels, fp);
-        fclose(fp);
-    }
-
-    free(indices);
-    free(image);
-}
-
-int* generate_spiral_indices(void) {
-    int* spiral_indices = (int*)malloc(NUM_PIXELS * sizeof(int));
-    if (!spiral_indices) {
-        fprintf(stderr, "Failed to allocate memory for spiral_indices.\n");
-        return NULL;
-    }
-
-    int x_start = 0, y_start = 0;
-    int x_end = WINDOW_WIDTH - 1, y_end = WINDOW_HEIGHT - 1;
-    int index = 0;
-
-    while (x_start <= x_end && y_start <= y_end) {
-        for (int x = x_start; x <= x_end; x++) {
-            if (index >= NUM_PIXELS) break;
-            spiral_indices[index++] = y_start * WINDOW_WIDTH + x;
-        }
-        y_start++;
-
-        for (int y = y_start; y <= y_end; y++) {
-            if (index >= NUM_PIXELS) break;
-            spiral_indices[index++] = y * WINDOW_WIDTH + x_end;
-        }
-        x_end--;
-
-        if (y_start <= y_end) {
-            for (int x = x_end; x >= x_start; x--) {
-                if (index >= NUM_PIXELS) break;
-                spiral_indices[index++] = y_end * WINDOW_WIDTH + x;
-            }
-            y_end--;
-        }
-
-        if (x_start <= x_end) {
-            for (int y = y_end; y >= y_start; y--) {
-                if (index >= NUM_PIXELS) break;
-                spiral_indices[index++] = y * WINDOW_WIDTH + x_start;
-            }
-            x_start++;
-        }
-    }
-
-    return spiral_indices;
-}
-
